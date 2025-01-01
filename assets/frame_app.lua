@@ -7,6 +7,7 @@ local plain_text = require('plain_text.min')
 -- Phone to Frame flags
 -- TODO sample messages only
 USER_SPRITE = 0x20
+DATE_MSG = 0x14
 TEXT_MSG = 0x12
 CLEAR_MSG = 0x10
 
@@ -14,6 +15,7 @@ CLEAR_MSG = 0x10
 data.parsers[USER_SPRITE] = sprite.parse_sprite
 data.parsers[CLEAR_MSG] = code.parse_code
 data.parsers[TEXT_MSG] = plain_text.parse_plain_text
+data.parsers[DATE_MSG] = plain_text.parse_plain_text
 
 
 -- Main app loop
@@ -29,6 +31,11 @@ function app_loop()
 
 		-- one or more full messages received
 		if items_ready > 0 then
+
+            if (data.app_data[DATE_MSG] ~= nil and data.app_data[DATE_MSG].string ~= nil) then
+                frame.display.text(data.app_data[DATE_MSG].string, 1, 1)
+                frame.display.show()
+            end
 
 			if (data.app_data[TEXT_MSG] ~= nil and data.app_data[TEXT_MSG].string ~= nil) then
 				local i = 0
