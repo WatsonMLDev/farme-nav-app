@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Added for rootBundle
 import 'package:logging/logging.dart';
@@ -5,6 +6,8 @@ import 'package:intl/intl.dart';
 
 import 'package:simple_frame_app/simple_frame_app.dart';
 import 'package:simple_frame_app/tx/plain_text.dart';
+import 'package:simple_frame_app/rx/tap.dart';
+import 'package:simple_frame_app/tx/code.dart';
 
 void main() => runApp(const MainApp());
 
@@ -27,6 +30,8 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     });
   }
 
+  // ---------------------------------------------------------------------------
+
   List<String> _filterLuaFiles(List<String> assets) {
     return assets.where((asset) => asset.endsWith('.lua')).toList();
   }
@@ -44,6 +49,25 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   String? _lastSentTime;
   bool _isRunning = false;
+  StreamSubscription<int>? _tapSubs;
+  bool _lockedTaps = false;
+
+  bool _run = true;
+
+  // ---------------------------------------------------------------------------
+
+  Future<void> clearDisplay(int x, int y, int width, int height) async {
+    _log.info("Sending clearDisplay with coordinates");
+    final command =
+        'frame.display.bitmap($x, $y, $width, $height, 1, string.rep("\\x00", $width * $height)) frame.display.show()';
+    await frame!.sendString(command, awaitResponse: false, log: true);
+    await Future.delayed(const Duration(milliseconds: 100));
+    await frame!.sendMessage(
+      TxPlainText(msgCode: 0x14, text: ''),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
 
   @override
   List<Widget> getFooterButtonsWidget() {
@@ -120,9 +144,11 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
         String fileName = luaFiles[0].split('/').last;
         int lastDotIndex = fileName.lastIndexOf(".lua");
         String bareFileName = fileName.substring(0, lastDotIndex);
-        await frame!.sendString('require("$bareFileName")', awaitResponse: true);
+        await frame!
+            .sendString('require("$bareFileName")', awaitResponse: true);
       } else if (luaFiles.contains('assets/frame_app.min.lua')) {
-        await frame!.sendString('require("frame_app.min")', awaitResponse: true);
+        await frame!
+            .sendString('require("frame_app.min")', awaitResponse: true);
       } else if (luaFiles.contains('assets/frame_app.lua')) {
         await frame!.sendString('require("frame_app")', awaitResponse: true);
       }
@@ -171,25 +197,86 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     if (mounted) setState(() {});
   }
 
+  Future<void> onTap(int taps) async {
+    try {
+      _log.info('current state of locking: $_lockedTaps and $_run');
+      if (!_lockedTaps){
+        if (taps == 1) {
+          _lockedTaps = true;
+          final currentTime = DateFormat('hh:mm a').format(DateTime.now());
+          await frame!.sendMessage(
+            TxPlainText(msgCode: 0x14, text: '$currentTime~$batteryLevel%'),
+          );
+          _log.info('Displayed time and battery: $currentTime, $batteryLevel%');
+
+          await Future.delayed(const Duration(seconds: 3));
+          await frame!.sendMessage(TxPlainText(msgCode: 0x14, text: '  '));
+          _lockedTaps = false;
+        } else if (taps == 2) {
+          _lockedTaps = true;
+          await frame!.sendMessage(
+            TxPlainText(msgCode: 0x14, text: "Double Tap - Navigation"),
+          );
+          _log.info('Double tap detected, navigation initiated.');
+
+          await Future.delayed(const Duration(seconds: 3));
+          await frame!.sendMessage(TxPlainText(msgCode: 0x14, text: "  "));
+          _lockedTaps = false;
+        } else {
+          _lockedTaps = true;
+          await frame!.sendMessage(
+            TxPlainText(msgCode: 0x14, text: "Multiple taps detected"),
+          );
+          _log.info('Multiple taps detected.');
+
+          await Future.delayed(const Duration(seconds: 3));
+          _run = true;
+          _lockedTaps = false;
+        }
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+    } catch (e) {
+      _log.severe('Error handling tap: $e');
+    }
+  }
+
   @override
   Future<void> run() async {
     _isRunning = true;
     currentState = ApplicationState.running;
     if (mounted) setState(() {});
 
+    await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: "")); // Clear the display initially
+
+    _tapSubs = RxTap().attach(frame!.dataResponse).listen((int taps) async {
+      onTap(taps);
+    });
+
+    await frame!
+        .sendMessage(TxCode(msgCode: 0x16, value: 1)); // Start sending taps
+
     try {
-      await frame!.sendMessage(TxPlainText( msgCode:0x12, text:"" ));
       while (_isRunning) {
-        final currentTime = DateFormat('hh:mm a').format(DateTime.now());
-        if (_lastSentTime != currentTime) {
-          await frame!.sendMessage(TxPlainText( msgCode: 0x14, text: '$currentTime~$batteryLevel%',));
-          _lastSentTime = currentTime;
-          _log.info('Sent new time: $currentTime');
+        if (_run){
+          _lockedTaps = true;
+          await frame!.sendMessage(TxPlainText(msgCode: 0x14, text: "  "));
+          await Future.delayed(const Duration(milliseconds: 100));
+
+          final now = DateTime.now();
+          await frame!.sendMessage(
+            TxPlainText(
+                msgCode: 0x12, text: "Custom Visual: ${now.second} seconds"),
+          );
+
+          await Future.delayed(const Duration(seconds: 3));
+          await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: "  "));
+
+          _run = false;
+          _lockedTaps = false;
         }
-
-
-        await Future.delayed(const Duration(seconds: 1)); // Adjust the interval if needed
+        await Future.delayed(const Duration(milliseconds: 100));
       }
+
 
       currentState = ApplicationState.ready;
       if (mounted) setState(() {});
@@ -203,6 +290,11 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   @override
   Future<void> cancel() async {
     _isRunning = false;
+    await frame!
+        .sendMessage(TxCode(msgCode: 0x16, value: 0)); // Stop sending taps
+    _tapSubs?.cancel();
+    _tapSubs = null;
+
     currentState = ApplicationState.ready;
     if (mounted) setState(() {});
   }

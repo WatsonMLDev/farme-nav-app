@@ -5,72 +5,89 @@ local sprite = require('sprite.min')
 local plain_text = require('plain_text.min')
 
 -- Phone to Frame flags
--- TODO sample messages only
 USER_SPRITE = 0x20
 DATE_MSG = 0x14
 TEXT_MSG = 0x12
 CLEAR_MSG = 0x10
+TAP_SUBS_MSG = 0x16  -- New message code
 
--- register the message parsers so they are automatically called when matching data comes in
+-- Frame to Phone flags
+TAP_MSG = 0x09
+
+-- Register message parsers
 data.parsers[USER_SPRITE] = sprite.parse_sprite
 data.parsers[CLEAR_MSG] = code.parse_code
 data.parsers[TEXT_MSG] = plain_text.parse_plain_text
 data.parsers[DATE_MSG] = plain_text.parse_plain_text
-
+data.parsers[TAP_SUBS_MSG] = code.parse_code
 
 -- Main app loop
 function app_loop()
-	-- clear the display
-	frame.display.text(" ", 1, 1)
-	frame.display.show()
+    frame.display.text(" ", 1, 1)
+    frame.display.show()
     local last_batt_update = 0
 
-	while true do
-		-- process any raw data items, if ready
-		local items_ready = data.process_raw_items()
+    while true do
+        rc, err = pcall(function()
+            local items_ready = data.process_raw_items()
 
-		-- one or more full messages received
-		if items_ready > 0 then
+            if items_ready > 0 then
+                if (data.app_data[DATE_MSG] ~= nil and data.app_data[DATE_MSG].string ~= nil) then
+                    frame.display.text(data.app_data[DATE_MSG].string, 1, 1)
+                    frame.display.show()
+                end
 
-            if (data.app_data[DATE_MSG] ~= nil and data.app_data[DATE_MSG].string ~= nil) then
-                frame.display.text(data.app_data[DATE_MSG].string, 1, 1)
-                frame.display.show()
+                if (data.app_data[TEXT_MSG] ~= nil and data.app_data[TEXT_MSG].string ~= nil) then
+                    local i = 1
+                    for line in data.app_data[TEXT_MSG].string:gmatch("([^\n]*)\n?") do
+                        if line ~= "" then
+                            frame.display.text(line, 1, i * 60 + 1)
+                            i = i + 1
+                        end
+                    end
+                    frame.display.show()
+                end
+
+                if (data.app_data[USER_SPRITE] ~= nil) then
+                    local spr = data.app_data[USER_SPRITE]
+                    frame.display.bitmap(1, 1, spr.width, 2^spr.bpp, 0, spr.pixel_data)
+                    frame.display.show()
+                    data.app_data[USER_SPRITE] = nil
+                end
+
+                if (data.app_data[CLEAR_MSG] ~= nil) then
+                    frame.display.text("  ", 1, 1)
+                    frame.display.show()
+                    data.app_data[CLEAR_MSG] = nil
+                end
+
+                -- Handle new tap subscription message
+                if (data.app_data[TAP_SUBS_MSG] ~= nil) then
+                    if data.app_data[TAP_SUBS_MSG].value == 1 then
+                        frame.imu.tap_callback(function()
+                            pcall(frame.bluetooth.send, string.char(TAP_MSG))
+                        end)
+                    else
+                        frame.imu.tap_callback(nil)
+                    end
+                    data.app_data[TAP_SUBS_MSG] = nil
+                end
             end
 
-			if (data.app_data[TEXT_MSG] ~= nil and data.app_data[TEXT_MSG].string ~= nil) then
-				local i = 0
-				for line in data.app_data[TEXT_MSG].string:gmatch("([^\n]*)\n?") do
-					if line ~= "" then
-						frame.display.text(line, 1, i * 60 + 1)
-						i = i + 1
-					end
-				end
-				frame.display.show()
-			end
+            -- Periodic battery updates
+            last_batt_update = battery.send_batt_if_elapsed(last_batt_update, 120)
+            frame.sleep(0.1)
+        end)
 
-			if (data.app_data[USER_SPRITE] ~= nil) then
-				-- show the sprite
-				local spr = data.app_data[USER_SPRITE]
-				frame.display.bitmap(1, 1, spr.width, 2^spr.bpp, 0, spr.pixel_data)
-				frame.display.show()
-
-				data.app_data[USER_SPRITE] = nil
-			end
-
-			if (data.app_data[CLEAR_MSG] ~= nil) then
-				-- clear the display
-				frame.display.text(" ", 1, 1)
-				frame.display.show()
-
-				data.app_data[CLEAR_MSG] = nil
-			end
-		end
-
-        -- periodic battery level updates, 120s for a camera app
-        last_batt_update = battery.send_batt_if_elapsed(last_batt_update, 120)
-		frame.sleep(0.1)
-	end
+        if rc == false then
+            print(err)
+            frame.display.text(" ", 1, 1)
+            frame.display.show()
+            frame.sleep(0.04)
+            break
+        end
+    end
 end
 
--- run the main app loop
+-- Run the main app loop
 app_loop()
