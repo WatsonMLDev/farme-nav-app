@@ -14,6 +14,11 @@ dependencies:
   simple_frame_app: ^3.1.0
   intl: ^0.17.0 # Or the latest version
   async: ^2.11.0
+  opencv_dart: ^1.3.3
+  path_provider: ^2.1.5
+  permission_handler: ^11.3.1
+  image_picker: ^1.1.2
+  image: ^4.5.2
 
 dev_dependencies:
   flutter_test:
@@ -28,5 +33,6 @@ flutter:
     - packages/simple_frame_app/lua/code.min.lua
     - packages/simple_frame_app/lua/plain_text.min.lua
     - packages/simple_frame_app/lua/camera.min.lua
-    - packages/simple_frame_app/lua/sprite.min.lua
+    - packages/simple_frame_app/lua/image_sprite_block.min.lua
     - assets/frame_app.lua
+    - assets/maps_route_easy.jpg

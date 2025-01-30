@@ -1,7 +1,7 @@
 local data = require('data.min')
 local battery = require('battery.min')
 local code = require('code.min')
-local sprite = require('sprite.min')
+local image_sprite_block = require('image_sprite_block.min')
 local plain_text = require('plain_text.min')
 
 -- Phone to Frame flags
@@ -15,7 +15,7 @@ TAP_SUBS_MSG = 0x16  -- New message code
 TAP_MSG = 0x09
 
 -- Register message parsers
-data.parsers[USER_SPRITE] = sprite.parse_sprite
+data.parsers[USER_SPRITE] = image_sprite_block.parse_image_sprite_block
 data.parsers[CLEAR_MSG] = code.parse_code
 data.parsers[TEXT_MSG] = plain_text.parse_plain_text
 data.parsers[DATE_MSG] = plain_text.parse_plain_text
@@ -49,10 +49,29 @@ function app_loop()
                 end
 
                 if (data.app_data[USER_SPRITE] ~= nil) then
-                    local spr = data.app_data[USER_SPRITE]
-                    frame.display.bitmap(1, 1, spr.width, 2^spr.bpp, 0, spr.pixel_data)
-                    frame.display.show()
-                    data.app_data[USER_SPRITE] = nil
+                    -- show the image sprite block
+                    local isb = data.app_data[USER_SPRITE]
+
+                    -- it can be that we haven't got any sprites yet, so only proceed if we have a sprite
+                    if isb.current_sprite_index > 0 then
+                        -- either we have all the sprites, or we want to do progressive/incremental rendering
+                        if isb.progressive_render or (isb.active_sprites == isb.total_sprites) then
+
+                            for index = 1, isb.active_sprites do
+                                local spr = isb.sprites[index]
+                                local y_offset = isb.sprite_line_height * (index - 1)
+
+                                -- set the palette the first time, all the sprites should have the same palette
+                                if index == 1 then
+                                    image_sprite_block.set_palette(spr.num_colors, spr.palette_data)
+                                end
+
+                                frame.display.bitmap(1, y_offset + 1, spr.width, 2^spr.bpp, 0, spr.pixel_data)
+                            end
+
+                            frame.display.show()
+                        end
+                    end
                 end
 
                 if (data.app_data[CLEAR_MSG] ~= nil) then
